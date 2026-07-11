@@ -1180,8 +1180,11 @@ class LXMRouter:
                 if not os.path.isdir(self.storagepath):
                     os.makedirs(self.storagepath)
 
-                with open(self.storagepath+"/local_deliveries", "wb") as locally_delivered_file:
+                write_path = self.storagepath+"/local_deliveries"
+                temp_path  = write_path+".tmp."+str(time.time())
+                with open(temp_path, "wb") as locally_delivered_file:
                     locally_delivered_file.write(msgpack.packb(self.locally_delivered_transient_ids))
+                os.replace(temp_path, write_path)
 
         except Exception as e:
             RNS.log("Could not save locally delivered message ID cache to storage. The contained exception was: "+str(e), RNS.LOG_ERROR)
@@ -1192,8 +1195,11 @@ class LXMRouter:
                 if not os.path.isdir(self.storagepath):
                     os.makedirs(self.storagepath)
 
-                with open(self.storagepath+"/locally_processed", "wb") as locally_processed_file:
+                write_path = self.storagepath+"/locally_processed"
+                temp_path  = write_path+".tmp."+str(time.time())
+                with open(temp_path, "wb") as locally_processed_file:
                     locally_processed_file.write(msgpack.packb(self.locally_processed_transient_ids))
+                os.replace(temp_path, write_path)
 
         except Exception as e:
             RNS.log("Could not save locally processed transient ID cache to storage. The contained exception was: "+str(e), RNS.LOG_ERROR)
@@ -1203,18 +1209,18 @@ class LXMRouter:
             if not os.path.isdir(self.storagepath):
                 os.makedirs(self.storagepath)
 
-            with open(self.storagepath+"/node_stats", "wb") as stats_file:
-                node_stats = {
-                    "client_propagation_messages_received": self.client_propagation_messages_received,
-                    "client_propagation_messages_served": self.client_propagation_messages_served,
-                    "unpeered_propagation_incoming": self.unpeered_propagation_incoming,
-                    "unpeered_propagation_rx_bytes": self.unpeered_propagation_rx_bytes,
-                }
+            write_path = self.storagepath+"/node_stats"
+            temp_path  = write_path+".tmp."+str(time.time())
+            with open(temp_path, "wb") as stats_file:
+                node_stats = {"client_propagation_messages_received": self.client_propagation_messages_received,
+                              "client_propagation_messages_served": self.client_propagation_messages_served,
+                              "unpeered_propagation_incoming": self.unpeered_propagation_incoming,
+                              "unpeered_propagation_rx_bytes": self.unpeered_propagation_rx_bytes}
                 stats_file.write(msgpack.packb(node_stats))
+            os.replace(temp_path, write_path)
 
         except Exception as e:
             RNS.log("Could not save local node stats to storage. The contained exception was: "+str(e), RNS.LOG_ERROR)
-        
 
     def clean_outbound_stamp_costs(self):
         try:
@@ -1234,12 +1240,13 @@ class LXMRouter:
     def save_outbound_stamp_costs(self):
         with self.cost_file_lock:
             try:
-                if not os.path.isdir(self.storagepath):
-                        os.makedirs(self.storagepath)
+                if not os.path.isdir(self.storagepath): os.makedirs(self.storagepath)
 
-                outbound_stamp_costs_file = open(self.storagepath+"/outbound_stamp_costs", "wb")
-                outbound_stamp_costs_file.write(msgpack.packb(self.outbound_stamp_costs.copy()))
-                outbound_stamp_costs_file.close()
+                write_path = self.storagepath+"/outbound_stamp_costs"
+                temp_path  = write_path+".tmp."+str(time.time())
+                with open(temp_path, "wb") as outbound_stamp_costs_file:
+                    outbound_stamp_costs_file.write(msgpack.packb(self.outbound_stamp_costs.copy()))
+                os.replace(temp_path, write_path)
 
             except Exception as e:
                 RNS.log("Could not save outbound stamp costs to storage. The contained exception was: "+str(e), RNS.LOG_ERROR)
@@ -1278,9 +1285,11 @@ class LXMRouter:
                 if not os.path.isdir(self.storagepath):
                         os.makedirs(self.storagepath)
 
-                available_tickets_file = open(self.storagepath+"/available_tickets", "wb")
-                available_tickets_file.write(msgpack.packb(self.available_tickets))
-                available_tickets_file.close()
+                write_path = self.storagepath+"/available_tickets"
+                temp_path  = write_path+".tmp."+str(time.time())
+                with open(temp_path, "wb") as available_tickets_file:
+                    available_tickets_file.write(msgpack.packb(self.available_tickets))
+                os.replace(temp_path, write_path)
 
             except Exception as e:
                 RNS.log("Could not save available tickets to storage. The contained exception was: "+str(e), RNS.LOG_ERROR)
@@ -1353,9 +1362,11 @@ class LXMRouter:
                     peer = self.peers[peer_id]
                     serialised_peers.append(peer.to_bytes())
 
-                peers_file = open(self.storagepath+"/peers", "wb")
-                peers_file.write(msgpack.packb(serialised_peers))
-                peers_file.close()
+                write_path = self.storagepath+"/peers"
+                temp_path  = write_path+".tmp."+str(time.time())
+                with open(temp_path, "wb") as peers_file:
+                    peers_file.write(msgpack.packb(serialised_peers))
+                os.replace(temp_path, write_path)
 
                 RNS.log(f"Saved {len(serialised_peers)} peers to storage in {RNS.prettyshorttime(time.time()-st)}", RNS.LOG_NOTICE)
 
@@ -2344,8 +2355,7 @@ class LXMRouter:
                             stamped_data    = lxmf_data+stamp_data
                             value_component = f"_{stamp_value}" if stamp_value and stamp_value > 0 else ""
                             file_path       = f"{self.messagepath}/{RNS.hexrep(transient_id, delimit=False)}_{received}{value_component}"
-                            msg_file        = open(file_path, "wb")
-                            msg_file.write(stamped_data); msg_file.close()
+                            with open(file_path, "wb") as msg_file: msg_file.write(stamped_data)
 
                             RNS.log(f"Received propagated LXMF message {RNS.prettyhexrep(transient_id)} with stamp value {stamp_value}, adding to peer distribution queues...", RNS.LOG_EXTREME)
                             self.propagation_entries[transient_id] = [destination_hash, file_path, time.time(), len(stamped_data), [], [], stamp_value]
