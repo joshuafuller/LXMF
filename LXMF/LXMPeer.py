@@ -378,9 +378,13 @@ class LXMPeer:
                                     cumulative_size += lxm_transfer_size
                                     unhandled_ids.append(transient_id)
 
+                                if len(unhandled_ids) == 0:
+                                    RNS.log(f"Sync requested for {self}, but no unhandled messages exist after offer preparation. Sync complete.", RNS.LOG_DEBUG)
+                                    return
+
                                 offer = [self.peering_key[0], unhandled_ids]
 
-                                RNS.log(f"Offering {len(unhandled_ids)} messages to peer {RNS.prettyhexrep(self.destination.hash)} ({RNS.prettysize(len(msgpack.packb(unhandled_ids)))})", RNS.LOG_VERBOSE)
+                                RNS.log(f"Offering {len(unhandled_ids)} messages to peer {RNS.prettyhexrep(self.destination.hash)}", RNS.LOG_VERBOSE)
                                 self.last_offer = unhandled_ids
                                 self.link.request(LXMPeer.OFFER_REQUEST_PATH, offer, response_callback=self.offer_response, failed_callback=self.request_failed)
                                 self.state = LXMPeer.REQUEST_SENT
