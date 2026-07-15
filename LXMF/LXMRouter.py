@@ -160,6 +160,8 @@ class LXMRouter:
         self.available_tickets = {"outbound": {}, "inbound": {}, "last_deliveries": {}}
 
         self.outbound_processing_lock = threading.Lock()
+        self.delivered_transient_ids_lock = threading.Lock()
+        self.processed_transient_ids_lock = threading.Lock()
         self.cost_file_lock = threading.Lock()
         self.ticket_file_lock = threading.Lock()
         self.stamp_gen_lock = threading.Lock()
@@ -237,9 +239,7 @@ class LXMRouter:
             RNS.log("Could not load locally processed message ID cache from storage. The contained exception was: "+str(e), RNS.LOG_ERROR)
             self.locally_processed_transient_ids = {}
 
-        try:
-            self.clean_transient_id_caches()
-
+        try: self.clean_transient_id_caches()
         except Exception as e:
             RNS.log("Could not clean transient ID caches. The contained exception was : "+str(e), RNS.LOG_ERROR)
             self.locally_delivered_transient_ids = {}
@@ -890,8 +890,7 @@ class LXMRouter:
         while (True):
             # TODO: Improve this to scheduling, so manual
             # triggers can delay next run
-            try:
-                self.jobs()
+            try: self.jobs()
             except Exception as e:
                 RNS.log("An error ocurred while running LXMF Router jobs.", RNS.LOG_ERROR)
                 RNS.log("The contained exception was: "+str(e), RNS.LOG_ERROR)
@@ -956,24 +955,24 @@ class LXMRouter:
     def clean_transient_id_caches(self):
         now = time.time()
         removed_entries = []
-        for transient_id in self.locally_delivered_transient_ids:
-            timestamp = self.locally_delivered_transient_ids[transient_id]
-            if now > timestamp+LXMRouter.MESSAGE_EXPIRY*6.0:
-                removed_entries.append(transient_id)
+        for transient_id in self.locally_delivered_transient_ids.copy():
+            timestamp = None
+            with self.delivered_transient_ids_lock: timestamp = self.locally_delivered_transient_ids[transient_id]
+            if timestamp and now > timestamp+LXMRouter.MESSAGE_EXPIRY*6.0: removed_entries.append(transient_id)
 
         for transient_id in removed_entries:
-            self.locally_delivered_transient_ids.pop(transient_id)
-            RNS.log("Cleaned "+RNS.prettyhexrep(transient_id)+" from local delivery cache", RNS.LOG_DEBUG)
+            with self.delivered_transient_ids_lock: self.locally_delivered_transient_ids.pop(transient_id)
+            RNS.log("Cleaned "+RNS.prettyhexrep(transient_id)+" from local delivery cache", RNS.LOG_DEBUG) if RNS.sl(RNS.LOG_DEBUG) else None
 
         removed_entries = []
         for transient_id in self.locally_processed_transient_ids:
-            timestamp = self.locally_processed_transient_ids[transient_id]
-            if now > timestamp+LXMRouter.MESSAGE_EXPIRY*6.0:
-                removed_entries.append(transient_id)
+            timestampt = None
+            with self.processed_transient_ids_lock: timestamp = self.locally_processed_transient_ids[transient_id]
+            if timestamp and now > timestamp+LXMRouter.MESSAGE_EXPIRY*6.0: removed_entries.append(transient_id)
 
         for transient_id in removed_entries:
-            self.locally_processed_transient_ids.pop(transient_id)
-            RNS.log("Cleaned "+RNS.prettyhexrep(transient_id)+" from locally processed cache", RNS.LOG_DEBUG)
+            with self.processed_transient_ids_lock: self.locally_processed_transient_ids.pop(transient_id)
+            RNS.log("Cleaned "+RNS.prettyhexrep(transient_id)+" from locally processed cache", RNS.LOG_DEBUG) if RNS.sl(RNS.LOG_DEBUG) else None
 
     def update_stamp_cost(self, destination_hash, stamp_cost):
         RNS.log(f"Updating outbound stamp cost for {RNS.prettyhexrep(destination_hash)} to {stamp_cost}", RNS.LOG_DEBUG)
@@ -1177,13 +1176,11 @@ class LXMRouter:
     def save_locally_delivered_transient_ids(self):
         try:
             if len(self.locally_delivered_transient_ids) > 0:
-                if not os.path.isdir(self.storagepath):
-                    os.makedirs(self.storagepath)
-
+                if not os.path.isdir(self.storagepath): os.makedirs(self.storagepath)
                 write_path = self.storagepath+"/local_deliveries"
                 temp_path  = write_path+".tmp."+str(time.time())
                 with open(temp_path, "wb") as locally_delivered_file:
-                    locally_delivered_file.write(msgpack.packb(self.locally_delivered_transient_ids))
+                    locally_delivered_file.write(msgpack.packb(self.locally_delivered_transient_ids.copy()))
                 os.replace(temp_path, write_path)
 
         except Exception as e:
@@ -1198,7 +1195,7 @@ class LXMRouter:
                 write_path = self.storagepath+"/locally_processed"
                 temp_path  = write_path+".tmp."+str(time.time())
                 with open(temp_path, "wb") as locally_processed_file:
-                    locally_processed_file.write(msgpack.packb(self.locally_processed_transient_ids))
+                    locally_processed_file.write(msgpack.packb(self.locally_processed_transient_ids.copy()))
                 os.replace(temp_path, write_path)
 
         except Exception as e:
@@ -1620,10 +1617,8 @@ class LXMRouter:
         self.wants_download_on_path_available_to = None
 
     def has_message(self, transient_id):
-        if transient_id in self.locally_delivered_transient_ids:
-            return True
-        else:
-            return False
+        if transient_id in self.locally_delivered_transient_ids: return True
+        else:                                                    return False
     
     def cancel_outbound(self, message_id, cancel_state=LXMessage.CANCELLED):
         try:
@@ -1816,11 +1811,11 @@ class LXMRouter:
                 RNS.log(str(self)+" ignored already received message from "+RNS.prettyhexrep(message.source_hash), RNS.LOG_DEBUG)
                 return False
             else:
-                self.locally_delivered_transient_ids[message.hash] = time.time()
+                with self.delivered_transient_ids_lock:
+                    self.locally_delivered_transient_ids[message.hash] = time.time()
 
             if self.__delivery_callback != None and callable(self.__delivery_callback):
-                try:
-                    self.__delivery_callback(message)
+                try: self.__delivery_callback(message)
                 except Exception as e:
                     RNS.log("An error occurred in the external delivery callback for "+str(message), RNS.LOG_ERROR)
                     RNS.trace_exception(e)
@@ -2335,8 +2330,7 @@ class LXMRouter:
                 if (not transient_id in self.propagation_entries and not transient_id in self.locally_processed_transient_ids) or allow_duplicate == True:
                     received = time.time()
                     destination_hash  = lxmf_data[:LXMessage.DESTINATION_LENGTH]
-
-                    self.locally_processed_transient_ids[transient_id] = received
+                    with self.processed_transient_ids_lock: self.locally_processed_transient_ids[transient_id] = received
 
                     if destination_hash in self.delivery_destinations:
                         delivery_destination = self.delivery_destinations[destination_hash]
@@ -2345,11 +2339,8 @@ class LXMRouter:
                         if decrypted_lxmf_data != None:
                             delivery_data = lxmf_data[:LXMessage.DESTINATION_LENGTH]+decrypted_lxmf_data
                             self.lxmf_delivery(delivery_data, delivery_destination.type, ratchet_id=delivery_destination.latest_ratchet_id, method=LXMessage.PROPAGATED, no_stamp_enforcement=no_stamp_enforcement, allow_duplicate=allow_duplicate)
-                            self.locally_delivered_transient_ids[transient_id] = time.time()
-
-                            if signal_local_delivery != None:
-                                return signal_local_delivery
-
+                            with self.delivered_transient_ids_lock: self.locally_delivered_transient_ids[transient_id] = time.time()
+                            if signal_local_delivery != None: return signal_local_delivery
                     else:
                         if self.propagation_node:
                             stamped_data    = lxmf_data+stamp_data
@@ -2416,8 +2407,7 @@ class LXMRouter:
     def process_deferred_stamps(self):
         if len(self.pending_deferred_stamps) > 0:
 
-            if self.stamp_gen_lock.locked():
-                return
+            if self.stamp_gen_lock.locked(): return
 
             else:
                 with self.stamp_gen_lock:
@@ -2426,6 +2416,7 @@ class LXMRouter:
                     for message_id in self.pending_deferred_stamps:
                         lxmessage = self.pending_deferred_stamps[message_id]
                         if selected_lxm == None:
+                            # TODO: Improve logic and add stamp_cost_known here
                             selected_lxm = lxmessage
                             selected_message_id = message_id
 
