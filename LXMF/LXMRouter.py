@@ -1994,19 +1994,15 @@ class LXMRouter:
                                 # Don't consider for unpeering until at
                                 # least one message has been offered
                                 pass
-                            else:
-                                waiting_peers.append(peer)
-                        else:
-                            unresponsive_peers.append(peer)
+                            else: waiting_peers.append(peer)
+                        else: unresponsive_peers.append(peer)
 
                 drop_pool = []
                 if len(unresponsive_peers) > 0:
                     drop_pool.extend(unresponsive_peers)
                     if not self.prioritise_rotating_unreachable_peers:
                         drop_pool.extend(waiting_peers)
-
-                else:
-                    drop_pool.extend(waiting_peers)
+                else: drop_pool.extend(waiting_peers)
 
                 if len(drop_pool) > 0:
                     drop_count = min(required_drops, len(drop_pool))

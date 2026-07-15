@@ -328,7 +328,7 @@ class LXMPeer:
                                 self.alive = True
                                 self.last_heard = time.time()
                                 self.sync_backoff = 0
-                                min_accepted_cost = min(0, self.propagation_stamp_cost-self.propagation_stamp_cost_flexibility)
+                                min_accepted_cost = max(0, self.propagation_stamp_cost-self.propagation_stamp_cost_flexibility)
 
                                 RNS.log("Synchronisation link to peer "+RNS.prettyhexrep(self.destination_hash)+" established, preparing sync offer...", RNS.LOG_DEBUG)
                                 unhandled_entries = []
