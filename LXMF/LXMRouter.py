@@ -160,6 +160,7 @@ class LXMRouter:
         self.wants_download_on_path_available_to = None
         self.propagation_transfer_state = LXMRouter.PR_IDLE
         self.propagation_transfer_progress = 0.0
+        self.propagation_transfer_size = None
         self.propagation_transfer_last_result = None
         self.propagation_transfer_last_duplicates = None
         self.propagation_transfer_max_messages = None
@@ -179,17 +180,18 @@ class LXMRouter:
         self.ticket_file_lock = threading.Lock()
         self.stamp_gen_lock = threading.Lock()
         self.accepted_offer_links_lock = threading.Lock()
+        self.sequential_validation_lock = threading.Lock()
+        self.incoming_delivery_resource_lock = threading.Lock()
         self.exit_handler_running = False
 
-        if identity == None:
-            identity = RNS.Identity()
+        if identity == None: identity = RNS.Identity()
 
         self.identity = identity
         self.propagation_destination = RNS.Destination(self.identity, RNS.Destination.IN, RNS.Destination.SINGLE, APP_NAME, "propagation")
         self.propagation_destination.set_default_app_data(self.get_propagation_node_app_data)
         self.control_destination = None
         self.validating_pn_stamps_from = {}
-        self.sequential_validation_lock = threading.Lock()
+        self.incoming_delivery_resources = {}
         self.client_propagation_messages_received = 0
         self.client_propagation_messages_served = 0
         self.unpeered_propagation_incoming = 0
@@ -502,6 +504,7 @@ class LXMRouter:
             max_messages = LXMRouter.PR_ALL_MESSAGES
 
         self.propagation_transfer_progress = 0.0
+        self.propagation_transfer_size = None
         self.propagation_transfer_max_messages = max_messages
         if self.outbound_propagation_node != None:
             if self.outbound_propagation_link != None and self.outbound_propagation_link.status == RNS.Link.ACTIVE:
@@ -868,6 +871,7 @@ class LXMRouter:
     JOB_OUTBOUND_INTERVAL  = 1
     JOB_STAMPS_INTERVAL    = 1
     JOB_LINKS_INTERVAL     = 1
+    JOB_RESOURCE_INTERVAL  = 2
     JOB_TRANSIENT_INTERVAL = 60
     JOB_STORE_INTERVAL     = 120
     JOB_PEERSYNC_INTERVAL  = 6
@@ -885,6 +889,9 @@ class LXMRouter:
 
             if self.processing_count % LXMRouter.JOB_LINKS_INTERVAL == 0:
                 self.clean_links()
+
+            if self.processing_count % LXMRouter.JOB_RESOURCE_INTERVAL == 0:
+                self.clean_resource_tracking()
 
             if self.processing_count % LXMRouter.JOB_TRANSIENT_INTERVAL == 0:
                 self.clean_transient_id_caches()
@@ -924,6 +931,22 @@ class LXMRouter:
                         peer.process_queues()
 
             RNS.log(f"Distribution queue mapping completed in {RNS.prettytime(time.time()-st)}", RNS.LOG_DEBUG)
+
+    def clean_resource_tracking(self):
+        try:
+            stale_resources = []
+            with self.incoming_delivery_resource_lock:
+                for resource_hash in self.incoming_delivery_resources:
+                    if self.incoming_delivery_resources[resource_hash].status >= RNS.Resource.COMPLETE:
+                        stale_resources.append(resource_hash)
+
+                for resource_hash in stale_resources: self.incoming_delivery_resources.pop(resource_hash)
+                cleaned = len(stale_resources)
+                if cleaned > 0: RNS.log(f"Cleaned {cleaned} resource{'s' if cleaned != 1 else ''} from inbound tracking", RNS.LOG_DEBUG)
+
+        except Exception as e:
+            RNS.log(f"Error while cleaning incoming delivery resource tracking: {e}", RNS.LOG_ERROR)
+            RNS.trace_exception(e)
 
     def clean_links(self):
         closed_links = []
@@ -1623,6 +1646,7 @@ class LXMRouter:
     def message_get_progress(self, request_receipt):
         self.propagation_transfer_state = LXMRouter.PR_RECEIVING
         self.propagation_transfer_progress = request_receipt.get_progress()
+        if request_receipt.response_size: self.propagation_transfer_size = request_receipt.response_size
 
     def message_get_failed(self, request_receipt):
         RNS.log("Message list/get request failed", RNS.LOG_DEBUG)
@@ -1632,12 +1656,11 @@ class LXMRouter:
     def acknowledge_sync_completion(self, reset_state=False, failure_state=None):
         self.propagation_transfer_last_result = None
         if reset_state or self.propagation_transfer_state <= LXMRouter.PR_COMPLETE:
-            if failure_state == None:
-                self.propagation_transfer_state = LXMRouter.PR_IDLE
-            else:
-                self.propagation_transfer_state = failure_state
+            if failure_state == None: self.propagation_transfer_state = LXMRouter.PR_IDLE
+            else:                     self.propagation_transfer_state = failure_state
 
         self.propagation_transfer_progress = 0.0
+        self.propagation_transfer_size = None
         self.wants_download_on_path_available_from = None
         self.wants_download_on_path_available_to = None
 
@@ -1645,6 +1668,54 @@ class LXMRouter:
         if transient_id in self.locally_delivered_transient_ids: return True
         else:                                                    return False
     
+    def inbound_count(self):
+        try:
+            with self.incoming_delivery_resource_lock:
+                return len([r for r in self.incoming_delivery_resources if self.incoming_delivery_resources[r].status < RNS.Resource.COMPLETE])
+        except Exception as e:
+            RNS.log(f"Error while getting inbound resource transfer count: {e}", RNS.LOG_ERROR)
+            return 0
+
+    def inbound_resources(self):
+        active_resources = []
+        with self.incoming_delivery_resource_lock:
+            for resource_hash in self.incoming_delivery_resources:
+                resource = self.incoming_delivery_resources[resource_hash]
+                if resource.status < RNS.Resource.COMPLETE:
+                    active_resources.append(resource)
+
+        return active_resources
+
+    def cancel_inbound(self, resource_hash):
+        resource = None
+        with self.incoming_delivery_resource_lock:
+            if resource_hash in self.incoming_delivery_resources:
+                resource = self.incoming_delivery_resources[resource_hash]
+
+        if not resource:
+            RNS.log(f"Resource {RNS.prettyhexrep(resource_hash)} not found, cannot cancel", RNS.LOG_WARNING)
+            return False
+
+        else:
+            if resource.status < RNS.Resource.COMPLETE:
+                resource.cancel()
+                RNS.log(f"Cancelled incoming delivery resource {resource}", RNS.LOG_NOTICE)
+                return True
+            else:
+                RNS.log(f"Incoming delivery resource {resource} already concluded, cannot cancel", RNS.LOG_WARNING)
+                return False
+
+    def cancel_all_inbound(self):
+        active_resources = []
+        with self.incoming_delivery_resource_lock:
+            for resource_hash in self.incoming_delivery_resources:
+                resource = self.incoming_delivery_resources[resource_hash]
+                if resource.status < RNS.Resource.COMPLETE:
+                    active_resources.append(resource)
+
+        for resource in active_resources: resource.cancel()
+        return len(active_resources)
+
     def cancel_outbound(self, message_id, cancel_state=LXMessage.CANCELLED):
         try:
             if message_id in self.pending_deferred_stamps:
@@ -1896,6 +1967,7 @@ class LXMRouter:
 
     def delivery_resource_transfer_began(self, resource):
         size = resource.get_data_size()
+        with self.incoming_delivery_resource_lock: self.incoming_delivery_resources[resource.hash] = resource
         RNS.log(f"Began {RNS.prettysize(size) if size else 'unknown size'} transfer for LXMF delivery resource {resource}", RNS.LOG_DEBUG)
 
     def propagation_resource_transfer_began(self, resource):
@@ -2262,7 +2334,6 @@ class LXMRouter:
                 return None
 
     def propagation_resource_concluded(self, resource):
-        with self.accepted_offer_links_lock: self.accepted_offer_links[resource.link.link_id] = self.OFFER_VALIDATING
         if resource.status == RNS.Resource.COMPLETE:
             try:
                 data = msgpack.unpackb(resource.data.read())
@@ -2316,9 +2387,16 @@ class LXMRouter:
                         ms = "" if len(messages) == 1 else "s"
                         RNS.log(f"Received {len(messages)} message{ms} from {remote_str}, validating stamps...", RNS.LOG_VERBOSE)
 
+                        with self.accepted_offer_links_lock:
+                            if remote_hash:
+                                RNS.log(f"Updating sync link accounting entry for {RNS.prettyhexrep(remote_hash)} to validating", RNS.LOG_DEBUG) # TODO: Remove at some point
+                                self.accepted_offer_links[resource.link.link_id] = self.OFFER_VALIDATING
+
                         with self.sequential_validation_lock:
-                            RNS.log(f"Adding validation job accounting entry for {RNS.prettyhexrep(remote_hash)}", RNS.LOG_DEBUG) # TODO: Remove at some point
-                            self.validating_pn_stamps_from[remote_hash] = time.time()
+                            if remote_hash:
+                                RNS.log(f"Adding validation job accounting entry for {RNS.prettyhexrep(remote_hash)}", RNS.LOG_DEBUG) # TODO: Remove at some point
+                                self.validating_pn_stamps_from[remote_hash] = time.time()
+
                         try:
                             min_accepted_cost  = max(0, self.propagation_stamp_cost-self.propagation_stamp_cost_flexibility)
                             validated_messages = LXStamper.validate_pn_stamps(messages, min_accepted_cost)
@@ -2333,10 +2411,11 @@ class LXMRouter:
                             return
 
                         finally:
-                            with self.sequential_validation_lock:
-                                RNS.log(f"Cleaning validation job accounting entry for {RNS.prettyhexrep(remote_hash)}", RNS.LOG_DEBUG) # TODO: Remove at some point
-                                try: self.validating_pn_stamps_from.pop(remote_hash)
-                                except Exception as e: RNS.log(f"Failed to remove PN stamp validation job from sequential tracking: {e}", RNS.LOG_ERROR)
+                            if remote_hash:
+                                with self.sequential_validation_lock:
+                                    RNS.log(f"Cleaning validation job accounting entry for {RNS.prettyhexrep(remote_hash)}", RNS.LOG_DEBUG) # TODO: Remove at some point
+                                    try: self.validating_pn_stamps_from.pop(remote_hash)
+                                    except Exception as e: RNS.log(f"Failed to remove PN stamp validation job from sequential tracking: {e}", RNS.LOG_ERROR)
 
                             with self.accepted_offer_links_lock:
                                 if resource.link.link_id in self.accepted_offer_links:
