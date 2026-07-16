@@ -1105,7 +1105,8 @@ autopeer_maxdepth = 6
 # propagation sync transfers will be accepted.
 # Once this number is reached, nodes offering
 # messages will receive a throttle response to
-# indicate that they can retry later.
+# indicate that they can retry later. On a slow
+# system, it's a good idea to change this to 1.
 
 # max_inbound_syncs = 3
 
