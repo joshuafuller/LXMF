@@ -1887,15 +1887,20 @@ class LXMRouter:
         link.set_packet_callback(self.delivery_packet)
         link.set_resource_strategy(RNS.Link.ACCEPT_APP)
         link.set_resource_callback(self.delivery_resource_advertised)
-        link.set_resource_started_callback(self.resource_transfer_began)
+        link.set_resource_started_callback(self.delivery_resource_transfer_began)
         link.set_resource_concluded_callback(self.delivery_resource_concluded)
         link.set_remote_identified_callback(self.delivery_remote_identified)
 
     def delivery_link_closed(self, link):
         pass
 
-    def resource_transfer_began(self, resource):
-        RNS.log("Transfer began for LXMF delivery resource "+str(resource), RNS.LOG_DEBUG)
+    def delivery_resource_transfer_began(self, resource):
+        size = resource.get_data_size()
+        RNS.log(f"Began {RNS.prettysize(size) if size else 'unknown size'} transfer for LXMF delivery resource {resource}", RNS.LOG_DEBUG)
+
+    def propagation_resource_transfer_began(self, resource):
+        size = resource.get_data_size()
+        RNS.log(f"Began {RNS.prettysize(size) if size else 'unknown size'} transfer for LXMF propagation resource {resource}", RNS.LOG_DEBUG)
 
     def delivery_resource_advertised(self, resource):
         size = resource.get_data_size()
@@ -2112,7 +2117,7 @@ class LXMRouter:
         link.set_packet_callback(self.propagation_packet)
         link.set_resource_strategy(RNS.Link.ACCEPT_APP)
         link.set_resource_callback(self.propagation_resource_advertised)
-        link.set_resource_started_callback(self.resource_transfer_began)
+        link.set_resource_started_callback(self.propagation_resource_transfer_began)
         link.set_resource_concluded_callback(self.propagation_resource_concluded)
         self.active_propagation_links.append(link)
 

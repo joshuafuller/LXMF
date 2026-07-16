@@ -97,7 +97,7 @@ def apply_config():
             if active_configuration["delivery_transfer_max_accepted_size"] < 0.38:
                 active_configuration["delivery_transfer_max_accepted_size"] = 0.38
         else:
-            active_configuration["delivery_transfer_max_accepted_size"] = 1000
+            active_configuration["delivery_transfer_max_accepted_size"] = 1
 
         if "lxmf" in lxmd_config and "on_inbound" in lxmd_config["lxmf"]:
             active_configuration["on_inbound"] = lxmd_config["lxmf"]["on_inbound"]
