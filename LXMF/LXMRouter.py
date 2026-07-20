@@ -1025,7 +1025,7 @@ class LXMRouter:
             RNS.log("Cleaned "+RNS.prettyhexrep(transient_id)+" from locally processed cache", RNS.LOG_DEBUG) if RNS.sl(RNS.LOG_DEBUG) else None
 
     def update_stamp_cost(self, destination_hash, stamp_cost):
-        RNS.log(f"Updating outbound stamp cost for {RNS.prettyhexrep(destination_hash)} to {stamp_cost}", RNS.LOG_DEBUG)
+        RNS.log(f"Updating outbound stamp cost for {RNS.prettyhexrep(destination_hash)} to {stamp_cost}", RNS.LOG_PATHING) if RNS.sl(RNS.LOG_PATHING) else None
         self.outbound_stamp_costs[destination_hash] = [time.time(), stamp_cost]
         
         def job(): self.save_outbound_stamp_costs()
